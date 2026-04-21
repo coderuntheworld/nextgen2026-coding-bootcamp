@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Data
+data/raw/
+data/intermediate/
+
+# Results
+results/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Claude Code
+CLAUDE.local.md
+settings.local.json
