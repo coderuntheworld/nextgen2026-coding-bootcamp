@@ -1,25 +1,23 @@
-import argparse
 from pathlib import Path
 
-from omegaconf import OmegaConf
-
+from nextgen2026_coding_bootcamp.cli import build_stage_parser
+from nextgen2026_coding_bootcamp.config import compose_config
 from nextgen2026_coding_bootcamp.steps.fetch import run_fetch
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the fetch stage.")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        required=True,
-        help="Path to fetch stage config file.",
-    )
+    parser = build_stage_parser("Run the fetch stage.")
     args = parser.parse_args()
 
-    cfg = OmegaConf.load(args.config)
+    config_root = Path("configs")
+    stage_part = str(args.config.relative_to(config_root))
+    parts = ["run.yaml", "paths.yaml", stage_part, "profiles/base.yaml"]
+
+    cfg = compose_config(config_root=config_root, parts=parts, overrides=args.set)
     run_fetch(cfg=cfg)
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
