@@ -37,42 +37,36 @@
 
 ## Minimal Context Bundle
 
+**First turn (read before planning):**
+
 - File or command: `AGENTS.md`
-  Why included: contains the "Do Not Change" rules and canonical commands. Must be read before any implementation to know what is off-limits.
+  Why included: contains the "Do Not Change" rules and canonical commands. Sets the boundaries before any code is written.
 
 - File or command: `agents/docs/temp-band-summary-01-task-spec.md`
-  Why included: the approved task contract. Defines scope, constraints, non-goals, and the full verification plan with specific assertion examples.
+  Why included: the approved task contract. Defines scope, constraints, verification plan, and the exact assertions the agent must add.
 
 - File or command: `src/nextgen2026_coding_bootcamp/steps/prepare.py`
-  Why included: primary implementation target. Contains `PREPARED_COLUMNS` (lines 19-36), `WEATHER_MAP`/`SEASON_MAP` (lines 10-16) as the pattern to follow, the `.assign()` chain (lines 69-79), and the `temp_c` derivation formula (line 75).
+  Why included: primary implementation target. Contains `PREPARED_COLUMNS` (lines 19-36) and the `WEATHER_MAP` pattern (lines 12-16) to replicate.
 
 - File or command: `src/nextgen2026_coding_bootcamp/steps/analyze.py`
-  Why included: second implementation target. Contains the `weather_summary` groupby-agg-sort-write pattern (lines 61-74) to replicate, and the return dict structure (lines 100-108) to extend.
+  Why included: second implementation target. Contains the `weather_summary` groupby-agg-sort-write (lines 61-74) to replicate.
 
 - File or command: `src/nextgen2026_coding_bootcamp/steps/report.py`
-  Why included: third implementation target. Contains `_resolve_analyze_inputs` (lines 12-31) which must be extended to resolve the new artifact, and the markdown generation block (lines 100-124) whose style must be matched.
+  Why included: third implementation target. Contains `_resolve_analyze_inputs` (lines 12-31) to extend and the markdown block (lines 100-124) whose style must be matched.
 
 - File or command: `configs/stages/prepare.yaml`
-  Why included: where the new `temp_band_edges` config key must be added. Currently only has `keep_holidays` and `write_prepared_csv` — establishes the naming convention.
+  Why included: where the new config key goes. Currently 3 lines -- establishes the naming convention.
 
-- File or command: `tests/test_prepare.py`
-  Why included: contains the fixture data (`RAW_CSV`, line 8-11) and existing assertions (lines 43-49) that the agent must extend. Shows the exact `temp_c` values the fixture produces.
+**Second turn (read when writing tests):**
 
-- File or command: `tests/test_analyze_report.py`
-  Why included: contains the 4-row fixture (lines 14-19) with `temp_c` values 4.99, 5.00, 15.00, 25.00 that must gain a `temp_band` column. Shows the artifact assertion pattern to replicate.
+- `tests/test_prepare.py` — read before adding `temp_band` assertions. Fixture produces `temp_c=3.28` and `temp_c=2.34`.
+- `tests/test_analyze_report.py` — read before updating fixture CSV header and adding artifact assertions. Fixture has `temp_c` values 4.99, 5.00, 15.00, 25.00.
+- `tests/test_known_answer.py` — read before updating `KNOWN_PREPARED_CSV`. All rows have `temp_c=0.0`.
+- `tests/test_workflow_smoke.py` — read before adding one assertion after line 79.
 
-- File or command: `tests/test_known_answer.py`
-  Why included: contains `KNOWN_PREPARED_CSV` (lines 10-16) with all rows at `temp_c=0.0`. Must be updated to include `temp_band` and gain pinned-value assertions for the new aggregation.
+**Do not read unless a blocker appears:**
 
-- File or command: `tests/test_workflow_smoke.py`
-  Why included: contains the full-pipeline artifact assertions (lines 72-82). The agent must add one new assertion for `temp_band_summary_csv`.
-
-**Not included in first turn (add only if a blocker appears):**
-
-- `src/nextgen2026_coding_bootcamp/workflow.py` — only needed if the stage wiring is unclear; the task does not modify workflow orchestration.
-- `configs/profiles/base.yaml` — only needed if profile-level overrides are required for the new config key.
-- `tests/test_integration_stage_handoff.py` — out of scope; no changes planned.
-- `scripts/` — CLI wrappers are not being modified.
+- `workflow.py`, `configs/profiles/base.yaml`, `test_integration_stage_handoff.py`, `scripts/` — all out of scope.
 
 ## First Handoff Message
 
