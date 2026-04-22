@@ -77,20 +77,106 @@
 
 ## Verification Plan
 
-| Layer | Planned check | Repo surface or command | What it proves | What still needs your review |
-| --- | --- | --- | --- | --- |
-| Unit | `temp_band` column present with correct bin labels for known `temp_c` values | `uv run pytest tests/test_prepare.py -v` | Bin assignment logic matches config edges | Whether the chosen default bin edges are sensible for the dataset's temperature range |
-| Unit | `temp_band_summary.csv` exists with expected columns and row count | `uv run pytest tests/test_analyze_report.py -v` | Aggregation runs and produces well-formed output | Whether mean-rentals-by-band values are plausible |
-| Integration | Prepared CSV flows through analyze and report without errors | `uv run pytest tests/test_integration_stage_handoff.py -v` | Cross-stage column contract is intact after adding `temp_band` | Whether the handoff test fixture data covers edge-case bins (e.g. boundary temperatures) |
-| End-to-end or smoke | Full workflow completes and produces all artifacts including new ones | `uv run python scripts/run_workflow.py --profile base --run-name temp-band-check` | No runtime errors; all stages accept the updated schema | Spot-check `temp_band_summary.csv` contents against the dataset |
-| Artifact or contract | `PREPARED_COLUMNS` matches actual CSV header; analyze return dict includes `temp_band_summary_csv` key | `uv run pytest tests/test_invariants.py -v` | Contract consistency between code and artifacts | Whether the return dict documentation (if any) is updated |
-| Your review | Diff review of all changed files | `git diff` | All changes are additive; no existing behaviour altered | Bin edge choices, config key naming, markdown formatting tone |
+### Part A — What tests can prove mechanically
+
+Run `uv run pytest -q` after implementation. The following checks must all pass without human judgment.
+
+**Existing tests (must pass unchanged):**
+
+| Test file | What it guards | How it catches a regression |
+| --- | --- | --- |
+| `test_prepare.py` | Column contract, cell-value correctness | `list(prepared.columns) == PREPARED_COLUMNS` (line 43). If `PREPARED_COLUMNS` gains `temp_band` but `.assign()` does not produce it, this fails. |
+| `test_invariants.py` | Column contract (independent fixture), value ranges | Same `== PREPARED_COLUMNS` assertion (line 38) on different data. Double-guards the schema. |
+| `test_known_answer.py` | Exact numeric outputs from analyze | Pins `high_demand_threshold == 25.0`, `high_demand_share == [0.0, 1.0]`, `weather_summary mean_rentals == 40.0`. Any accidental change to existing aggregation logic fails here. |
+| `test_integration_stage_handoff.py` | fetch-to-prepare path plumbing | `fetch_csv_path == prepare_input_path` (line 65). Confirms artifact wiring. Does **not** check column schema -- see Part C. |
+| `test_workflow_smoke.py` | Full pipeline artifact existence | Asserts every key in `ctx.artifacts` for all four stages (lines 72-82). Currently does **not** assert `temp_band_summary_csv` -- see new assertions below. |
+| `test_analyze_report.py` | Analyze artifact shape, report markdown content | Checks column names, row counts, sort order for `weather_summary`/`hourly_profile`/`high_demand_share`; checks markdown substrings. Fixture CSV header currently lacks `temp_band` -- see new assertions below. |
+
+**New assertions the agent must add:**
+
+1. **`test_prepare.py` — bin assignment for known inputs.**
+   The existing fixture has `temp=0.24` and `temp=0.22`, producing `temp_c=3.28` and `temp_c=2.34` (via `temp * 47 - 8`). Both are low temperatures. The agent must add assertions like:
+   ```python
+   assert prepared.loc[0, "temp_band"] == "cold"  # temp_c=3.28
+   assert prepared.loc[1, "temp_band"] == "cold"  # temp_c=2.34
+   ```
+   This proves: bin assignment logic runs and maps known `temp_c` values to the correct label.
+
+2. **`test_analyze_report.py` — fixture update and artifact check.**
+   The 4-row fixture already has `temp_c` values of 4.99, 5.00, 15.00, and 25.00. The agent must:
+   - Add `temp_band` to the fixture CSV header with labels consistent with the configured bin edges (these four values should span at least two distinct bands).
+   - Assert `temp_band_summary.csv` exists: `assert Path(analyze_artifacts["temp_band_summary_csv"]).exists()`
+   - Assert columns: `assert list(temp_band_summary.columns) == ["temp_band", "mean_rentals", "observations"]`
+   - Assert row count equals the number of distinct bands in the fixture.
+   - Assert the report markdown contains a temperature-band section: `assert "temp_band" in summary_markdown` or equivalent substring.
+   This proves: analyze produces the new artifact with the right schema; report consumes it.
+
+3. **`test_known_answer.py` — pinned values for new aggregation.**
+   The fixture has all rows at `temp_c=0.0`. The agent must:
+   - Add `temp_band` column to `KNOWN_PREPARED_CSV` (all rows will map to the same band, e.g. `cold`).
+   - Assert: `temp_band_summary = pd.read_csv(artifacts["temp_band_summary_csv"])` produces exactly one row with `mean_rentals` matching the overall mean of the fixture (27.5).
+   This proves: the aggregation produces correct, pinned numeric output for a known input.
+
+4. **`test_workflow_smoke.py` — new artifact key in full pipeline.**
+   The agent must add one line after the existing analyze artifact assertions (after line 79):
+   ```python
+   assert Path(ctx.artifacts["analyze"]["temp_band_summary_csv"]).exists()
+   ```
+   This proves: the full pipeline wires the new artifact through `ctx.artifacts` end-to-end.
+
+5. **`test_invariants.py` — no new assertions needed.**
+   The existing `== PREPARED_COLUMNS` check already covers the new column automatically once `PREPARED_COLUMNS` is updated.
+
+**Full pipeline smoke run:**
+
+After all tests pass, run:
+```
+uv run python scripts/run_workflow.py --profile base --run-name temp-band-check
+```
+This proves: real data (17,379 rows) flows through all stages without runtime errors and produces the new artifact on disk.
+
+### Part B — What still needs your review
+
+These items cannot be verified by any test. Each requires you to look at a specific artifact or diff section and make a judgment call.
+
+1. **Bin edge defaults.** Open `configs/stages/prepare.yaml` and check that the configured edges are reasonable for `temp_c` range -8 to 39 C (derived from `temp * 47 - 8` at `prepare.py:75`). A bad split (e.g. all data in one band) would pass every test but produce a useless summary. Quick check: after the full-data run, open `temp_band_summary.csv` and confirm every band has a non-trivial number of observations.
+
+2. **Band label neutrality.** Labels like "cold", "mild", "warm", "hot" are descriptive. Labels like "dangerous", "ideal", "uncomfortable" are evaluative and inappropriate for a data summary. Scan the diff for the label list.
+
+3. **Report markdown voice.** The existing summary uses backtick-wrapped values in a bullet list (e.g. `` - High-demand quantile: `0.9` ``). The new temperature-band section should match this style. Read the generated `analysis_summary.md` from the full-data run and compare.
+
+4. **Fixture diversity.** `test_known_answer.py` has all rows at `temp_c=0.0`, so it only exercises one band. This is acceptable for a known-answer regression test (it pins the value), but it does not guard against off-by-one errors at bin boundaries. Check whether the `test_analyze_report.py` fixture (with `temp_c` values 4.99, 5.00, 15.00, 25.00) exercises at least two bands. If all four land in the same band, ask for a revision.
+
+5. **Artifact plausibility.** After the full-data run, open `temp_band_summary.csv` and check: (a) no NaN band labels, (b) observation counts sum to the total row count, (c) mean rentals increase or vary across bands in a way that is directionally plausible (warmer weather generally means more rentals in this dataset).
+
+6. **Diff scope.** Run `git diff --stat` and confirm changes are limited to the declared surfaces. No files outside `steps/`, `configs/`, and `tests/` should be touched. No existing assertions should be weakened or removed.
+
+### Part C — Known gaps in the test suite (out of scope to fix)
+
+- `test_integration_stage_handoff.py` checks path plumbing between fetch and prepare but does not check column schema. A prepare-to-analyze column mismatch would not be caught by this test. Fixing this gap is a separate task.
+- The 2-row smoke fixture in `test_workflow_smoke.py` has `temp=0.24` and `temp=0.22`, both producing low `temp_c` values. The smoke test will only exercise one temperature band. Adding fixture diversity to the smoke test is desirable but not required for this task.
 
 ## Decision Threshold
 
-- Accept when: all existing tests pass, new tests cover bin assignment and artifact generation, the full workflow completes without error, and the diff is limited to the files listed above with no unrelated changes.
-- Revise when: tests pass but bin edges are hard-coded instead of configurable, or the report section is added but doesn't match the existing markdown style, or `PREPARED_COLUMNS` is updated but test fixtures don't include `temp_band`, or the analyze return dict is missing the new artifact key.
-- Reject when: existing tests fail, the prepared CSV schema drops or renames existing columns, stage ordering or CLI semantics change, or the diff touches files outside the declared surface area without justification.
+- Accept when:
+  - **Part A clears:** `uv run pytest -q` passes with zero failures, all five new assertion groups (items 1-5 above) are present, and the full-data smoke run completes without error.
+  - **Part B clears:** you have checked all six reviewer items and found no issues -- bin edges are sensible, labels are neutral, markdown matches existing voice, fixture diversity spans multiple bands, artifact values are plausible, and the diff is scoped to declared surfaces.
+- Revise when:
+  - Part A passes but Part B reveals a fixable issue:
+    - Bin edges are hard-coded in `prepare.py` instead of read from config.
+    - Test fixtures lack `temp_band` in CSV headers (tests pass vacuously because analyze never references the missing column).
+    - `test_known_answer.py` fixture is not updated, so the known-answer test does not exercise the new aggregation.
+    - `test_workflow_smoke.py` does not assert `temp_band_summary_csv` in `ctx.artifacts["analyze"]`.
+    - Report markdown section exists but does not match the bullet-list-with-backtick style of existing content.
+    - Band labels use evaluative language ("dangerous", "ideal") instead of neutral descriptors ("cold", "mild", "warm", "hot").
+    - The `test_analyze_report.py` fixture puts all four rows into the same band, so the aggregation is never tested across multiple groups.
+- Reject when:
+  - Any existing test fails.
+  - `PREPARED_COLUMNS` drops or renames an existing column.
+  - Stage ordering or CLI semantics change.
+  - The diff touches files outside the declared surface without justification.
+  - The `temp_c` conversion formula or any existing map (`SEASON_MAP`, `WEATHER_MAP`, `DAY_TYPE_MAP`) is modified.
+  - Existing test assertions are weakened or removed to make new code pass.
 
 ## Approval
 
